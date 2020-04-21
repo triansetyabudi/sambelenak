@@ -117,6 +117,13 @@ func (l *SessionLimiter) limitRedis(currentSession *user.SessionState, key strin
 	rateLimiterKey := RateLimitKeyPrefix + rateScope + currentSession.KeyHash()
 	rateLimiterSentinelKey := RateLimitKeyPrefix + rateScope + currentSession.KeyHash() + ".BLOCKED"
 
+	if currentSession.MetaData != nil {
+		if _, ok := currentSession.MetaData[keyDataDeveloperID]; ok {
+			rateLimiterKey = RateLimitKeyPrefix + rateScope + currentSession.MetaData[keyDataDeveloperID].(string)
+			rateLimiterSentinelKey = RateLimitKeyPrefix + rateScope + currentSession.MetaData[keyDataDeveloperID].(string) + ".BLOCKED"
+		}
+	}
+
 	if l.doRollingWindowWrite(key, rateLimiterKey, rateLimiterSentinelKey, currentSession, store, globalConf, apiLimit, dryRun) {
 		return true
 	}
