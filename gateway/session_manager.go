@@ -135,6 +135,12 @@ func (l *SessionLimiter) limitDRL(currentSession *user.SessionState, key string,
 	currRate := apiLimit.Rate
 	per := apiLimit.Per
 
+	if currentSession.MetaData != nil {
+		if _, ok := currentSession.MetaData[keyDataDeveloperID]; ok {
+			bucketKey = currentSession.MetaData[keyDataDeveloperID].(string) + ":" + rateScope + currentSession.LastUpdated
+		}
+	}
+
 	// DRL will always overflow with more servers on low rates
 	rate := uint(currRate * float64(DRLManager.RequestTokenValue))
 	if rate < uint(DRLManager.CurrentTokenValue()) {
@@ -270,6 +276,13 @@ func (l *SessionLimiter) RedisQuotaExceeded(r *http.Request, currentSession *use
 	}
 
 	rawKey := QuotaKeyPrefix + quotaScope + currentSession.KeyHash()
+
+	if currentSession.MetaData != nil {
+		if _, ok := currentSession.MetaData[keyDataDeveloperID]; ok {
+			rawKey = QuotaKeyPrefix + quotaScope + currentSession.MetaData[keyDataDeveloperID].(string)
+		}
+	}
+
 	quotaRenewalRate := limit.QuotaRenewalRate
 	quotaRenews := limit.QuotaRenews
 	quotaMax := limit.QuotaMax
