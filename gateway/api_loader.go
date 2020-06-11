@@ -10,6 +10,9 @@ import (
 	"strings"
 	"sync"
 
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
+
 	"github.com/jensneuse/graphql-go-tools/pkg/playground"
 
 	"github.com/gorilla/mux"
@@ -437,7 +440,12 @@ func processSpec(spec *APISpec, apisByListen map[string]int,
 	//Do not add middlewares after cache middleware.
 	//It will not get executed
 	mwAppendEnabled(&chainArray, &RedisCacheMiddleware{BaseMiddleware: baseMid, CacheStore: &cacheStore})
-	chain = alice.New(chainArray...).Then(&DummyProxyHandler{SH: SuccessHandler{baseMid}})
+
+	if spec.GlobalConfig.HttpServerOptions.EnableH2c {
+		chain = alice.New(chainArray...).Then(h2c.NewHandler(&DummyProxyHandler{SH: SuccessHandler{baseMid}}, &http2.Server{}))
+	} else {
+		chain = alice.New(chainArray...).Then(&DummyProxyHandler{SH: SuccessHandler{baseMid}})
+	}
 
 	if !spec.UseKeylessAccess {
 		var simpleArray []alice.Constructor
@@ -774,7 +782,9 @@ func loadApps(specs []*APISpec) {
 					mainLog.Infof("Intialized tracer  api_name=%q", spec.Name)
 				}
 			}
+
 			tmpSpecHandles.Store(spec.APIID, loadHTTPService(spec, apisByListen, &gs, muxer))
+
 		case "tcp", "tls":
 			loadTCPService(spec, &gs, muxer)
 		}
