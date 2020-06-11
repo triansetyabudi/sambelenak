@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -9,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/TykTechnologies/again"
 
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
@@ -53,10 +56,10 @@ func skipSpecBecauseInvalid(spec *APISpec, logger *logrus.Entry) bool {
 
 	switch spec.Protocol {
 	case "", "http", "https":
-		if spec.Proxy.ListenPath == "" {
-			logger.Error("Listen path is empty")
-			return true
-		}
+		//if spec.Proxy.ListenPath == "" {
+		//	logger.Error("Listen path is empty")
+		//	return true
+		//}
 		if strings.Contains(spec.Proxy.ListenPath, " ") {
 			logger.Error("Listen path contains spaces, is invalid")
 			return true
@@ -565,18 +568,18 @@ func (d *DummyProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if d.SH.Spec.target.Scheme == "tyk" {
-		handler, found := findInternalHttpHandlerByNameOrID(d.SH.Spec.target.Host)
-		if !found {
-			handler := ErrorHandler{*d.SH.Base()}
-			handler.HandleError(w, r, "Couldn't detect target", http.StatusInternalServerError, true)
-			return
-		}
-
-		sanitizeProxyPaths(d.SH.Spec, r)
-		handler.ServeHTTP(w, r)
-		return
-	}
+	//if d.SH.Spec.target.Scheme == "tyk" {
+	//	handler, found := findInternalHttpHandlerByNameOrID(d.SH.Spec.target.Host)
+	//	if !found {
+	//		handler := ErrorHandler{*d.SH.Base()}
+	//		handler.HandleError(w, r, "Couldn't detect target", http.StatusInternalServerError, true)
+	//		return
+	//	}
+	//
+	//	sanitizeProxyPaths(d.SH.Spec, r)
+	//	handler.ServeHTTP(w, r)
+	//	return
+	//}
 	d.SH.ServeHTTP(w, r)
 }
 
@@ -787,6 +790,32 @@ func loadApps(specs []*APISpec) {
 
 		case "tcp", "tls":
 			loadTCPService(spec, &gs, muxer)
+
+		case "h2c":
+			//we want to have a proxy which can just be reached on root over http
+			//so lets just generate a listener and wrap the chain as the handler so we get middlewares etc
+			tmpSpecHandles.Store(spec.APIID, loadHTTPService(spec, apisByListen, &gs, muxer))
+			muxer.Lock()
+			muxer.again = again.New()
+			listener, err := muxer.generateListener(spec.ListenPort, spec.Protocol)
+			if err != nil {
+				mainLog.WithError(err).Error("Can't start listener")
+				continue
+			}
+
+			_, portS, _ := net.SplitHostPort(listener.Addr().String())
+			port, _ := strconv.Atoi(portS)
+			muxer.getProxy(spec.ListenPort).port = port
+			muxer.getProxy(spec.ListenPort).listener = listener
+			addr := config.Global().ListenAddress + ":" + strconv.Itoa(spec.ListenPort)
+			muxer.getProxy(spec.ListenPort).httpServer = &http.Server{
+				Addr:    addr,
+				Handler: h2c.NewHandler(loadHTTPService(spec, apisByListen, &gs, muxer), &http2.Server{}),
+			}
+			go muxer.getProxy(spec.ListenPort).httpServer.Serve(muxer.getProxy(spec.ListenPort).listener)
+			muxer.getProxy(spec.ListenPort).started = true
+
+			muxer.Unlock()
 		}
 	}
 
